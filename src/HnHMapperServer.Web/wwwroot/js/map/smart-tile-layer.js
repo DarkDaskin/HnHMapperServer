@@ -42,20 +42,8 @@ export const SmartTileLayer = L.TileLayer.extend({
             return L.Util.emptyImageUrl;
         }
 
-        // Get grid offsets (in grid coordinates, constant across zoom)
-        const gridOffsetX = this.offsetX || 0;
-        const gridOffsetY = this.offsetY || 0;
-
-        // IMPORTANT: coords.x/y are in Leaflet's zoom space, so we must use Leaflet zoom
-        // for offset calculation, not HnH zoom (which is reversed via zoomReverse option)
-        const leafletZoom = this._map ? this._map.getZoom() : HnHMaxZoom;
-        // Scale factor: at Leaflet zoom z, one tile covers 2^(HnHMaxZoom - z) * 4 grids
-        // (4x because 400x400 tiles cover 4x4 base 100x100 grid cells)
-        // Using pre-computed SCALE_FACTORS lookup instead of Math.pow (5x faster)
-        const scaleAtLeafletZoom = SCALE_FACTORS[leafletZoom] || ((1 << (HnHMaxZoom - leafletZoom)) * TILE_TO_GRID_RATIO);
-        // Convert grid offset to tile offset at this Leaflet zoom level
-        const tileOffsetX = gridOffsetX / scaleAtLeafletZoom;
-        const tileOffsetY = gridOffsetY / scaleAtLeafletZoom;
+        // Get tile offset at current Leaflet zoom level
+        const [tileOffsetX, tileOffsetY] = this._getTileOffset();
 
         // Get HnH zoom for the URL z parameter (server needs this for tile path)
         const hnhZoom = this._getZoomForUrl();
@@ -114,6 +102,36 @@ export const SmartTileLayer = L.TileLayer.extend({
         data.v = revision;
 
         return L.Util.template(this._url, L.Util.extend(data, this.options));
+    },
+
+    // Convert current grid offset to tile offset at current Leaflet zoom level
+    _getTileOffset: function () {
+        // Get grid offsets (in grid coordinates, constant across zoom)
+        const gridOffsetX = this.offsetX || 0;
+        const gridOffsetY = this.offsetY || 0;
+
+        // IMPORTANT: coords.x/y are in Leaflet's zoom space, so we must use Leaflet zoom
+        // for offset calculation, not HnH zoom (which is reversed via zoomReverse option)
+        const leafletZoom = this._map ? this._map.getZoom() : HnHMaxZoom;
+
+        // Scale factor: at Leaflet zoom z, one tile covers 2^(HnHMaxZoom - z) * 4 grids
+        // (4x because 400x400 tiles cover 4x4 base 100x100 grid cells)
+        // Using pre-computed SCALE_FACTORS lookup instead of Math.pow (5x faster)
+        const scaleAtLeafletZoom = SCALE_FACTORS[leafletZoom] || ((1 << (HnHMaxZoom - leafletZoom)) * TILE_TO_GRID_RATIO);
+
+        // Convert grid offset to tile offset at this Leaflet zoom level
+        const tileOffsetX = gridOffsetX / scaleAtLeafletZoom;
+        const tileOffsetY = gridOffsetY / scaleAtLeafletZoom;
+        return [tileOffsetX, tileOffsetY];
+    },
+
+    // Override internal Leaflet method to apply grid offset when positioning tiles on the map
+    _getTilePos: function (coords) {
+        const basePos = L.TileLayer.prototype._getTilePos.call(this, coords);
+        const [tileOffsetX, tileOffsetY] = this._getTileOffset();
+        const pixelOffsetX = (Math.round(tileOffsetX) - tileOffsetX) * TileSize;
+        const pixelOffsetY = (Math.round(tileOffsetY) - tileOffsetY) * TileSize;
+        return basePos.add([pixelOffsetX, pixelOffsetY]);
     },
 
     refresh: function (x, y, z) {
@@ -401,11 +419,7 @@ export const SmartTileLayer = L.TileLayer.extend({
                     hnhZ = hnhZ + (self.options.zoomOffset || 0);
 
                     // Apply grid offsets in the same way as getTileUrl() (rounded tile offsets).
-                    const gridOffsetX = self.offsetX || 0;
-                    const gridOffsetY = self.offsetY || 0;
-                    const scaleAtLeafletZoom = SCALE_FACTORS[leafletZoom] || ((1 << (HnHMaxZoom - leafletZoom)) * TILE_TO_GRID_RATIO);
-                    const tileOffsetX = gridOffsetX / scaleAtLeafletZoom;
-                    const tileOffsetY = gridOffsetY / scaleAtLeafletZoom;
+                    const [tileOffsetX, tileOffsetY] = self._getTileOffset();
                     const requestedX = coords.x + Math.round(tileOffsetX);
                     const requestedY = coords.y + Math.round(tileOffsetY);
 
